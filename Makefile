@@ -27,4 +27,4 @@ benchlet-runner:	$(OBJS)
 					$(LINK) $(OBJS) -o benchlet-runner $(LD_LIBS)
 
 clean:
-		$(RM) -rf $(OBJS)
+		$(RM) -rf $(OBJS) benchlet-runner
