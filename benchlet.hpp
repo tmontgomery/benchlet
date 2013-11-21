@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 Todd L. Montgomery
+ * Copyright 2013 Informatica, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,45 @@
 #define _BENCHLET_HPP
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+#if defined(Darwin)
+#   include <mach/mach.h>
+#   include <mach/mach_time.h>
+#elif defined(__linux__)
+#   include <time.h>
+#else
+#   error "Must define Darwin or __linux__"
+#endif /* platform includes */
 
 #include <iostream>
 #include <vector>
 
+#define DEFAULT_ITERATIONS 1
+#define DEFAULT_ITERATIONS_STRING "1"
+
+#define DEFAULT_BATCHES 1
+#define DEFAULT_BATCHES_STRING "1"
+
+#define DEFAULT_RETAIN_STATS false
+
 class Benchmark
 {
 public:
+    enum ConfigVariable
+    {
+        ITERATIONS,
+        BATCHES,
+        RETAIN_STATS
+    };
+
+    struct Config
+    {
+        ConfigVariable key;
+        const char *value;
+    };
+
     virtual void setUp(void) {};
     virtual void tearDown(void) {};
     virtual void benchmarkBody(void) {};
@@ -36,40 +68,104 @@ public:
 
     void iterations(const unsigned int i) { iterations_ = i; };
     unsigned int iterations(void) const { return iterations_; };
+
+    void batches(const unsigned int i) { batches_ = i; };
+    unsigned int batches(void) const { return batches_; };
+
+    void config(const struct Config *cfg, unsigned int numConfigs) { config_ = cfg; numConfigs_ = numConfigs; };
+    const struct Config *config(void) const { return config_; };
+    unsigned int numConfigs(void) const { return numConfigs_; };
+
+    void stats(uint64_t *stats) { stats_ = stats; };
+    uint64_t *stats(void) { return stats_; };
+
+    void retainStats(bool retain) { retainStats_ = retain; };
+    bool retainStats(void) const { return retainStats_; };
 private:
     const char *name_;
     const char *runName_;
     unsigned int iterations_;
+    unsigned int batches_;
+    const struct Config *config_;
+    unsigned int numConfigs_;
+    uint64_t *stats_;
+    bool retainStats_;
     // save start time, etc.
 };
 
 class BenchmarkRunner
 {
 public:
-    static Benchmark *registerBenchmark(const char *name, const char *runName, Benchmark *impl, unsigned int iters)
+    static Benchmark *registerBenchmark(const char *name, const char *runName, Benchmark *impl, struct Benchmark::Config *cfg, int numCfgs)
     {
         impl->name(name);
         impl->runName(runName);
-        impl->iterations(iters);
+        impl->config(cfg, numCfgs);
+        impl->iterations(DEFAULT_ITERATIONS);
+        impl->batches(DEFAULT_BATCHES);
+        impl->retainStats(DEFAULT_RETAIN_STATS);
+        for (int i = 0, max = numCfgs; i < max; i++)
+        {
+            if (cfg[i].key == Benchmark::ITERATIONS)
+            {
+                impl->iterations(atoi(cfg[i].value));
+            }
+            else if (cfg[i].key == Benchmark::BATCHES)
+            {
+                impl->batches(atoi(cfg[i].value));
+            }
+            else if (cfg[i].key == Benchmark::RETAIN_STATS)
+            {
+                if (strcmp(cfg[i].value, "true") == 0)
+                {
+                    impl->retainStats(true);
+                }
+                else if (strcmp(cfg[i].value, "false") == 0)
+                {
+                    impl->retainStats(false);
+                }
+            }
+        }
         table().push_back(impl);
-        std::cout << "Registering " << name << " run " << runName << " iterations " << iters << std::endl;
+        std::cout << "Registering " << name << " run \"" << runName << "\" total iterations " << impl->iterations() * impl->batches() << std::endl;
         return impl;
     };        
 
     static void run(void)
     {
-        std::cout << "Run " <<  table().size() << " benchmarks" << std::endl;
         for (std::vector<Benchmark *>::iterator it = table().begin(); it != table().end(); ++it)
         {
             Benchmark *benchmark = *it;
+            uint64_t startTimestamp, elapsedNanos;
+            double nanospop, opspsec;
+            uint64_t *stats = new uint64_t[benchmark->batches()];
+            uint64_t total = 0;
 
-            std::cout << "Running... " << benchmark->name() << " run " << benchmark->runName() << std::endl;
+            std::cout << "Running benchmark " << benchmark->name() << "." << benchmark->runName() << ". ";
+            std::cout << benchmark->iterations() << " iterations X " << benchmark->batches() << " batches. " << std::endl;
             benchmark->setUp();
-            for (int i = 0, max = benchmark->iterations(); i < max; i++)
+            for (int i = 0, max_i = benchmark->batches(); i < max_i; i++)
             {
-                benchmark->benchmarkBody();
+                startTimestamp = currentTimestamp();
+                for (int j = 0, max_j = benchmark->iterations(); j < max_j; j++)
+                {
+                    benchmark->benchmarkBody();
+                }
+                elapsedNanos = elapsedNanoseconds(startTimestamp, currentTimestamp());
+                nanospop = (double)elapsedNanos / (double)benchmark->iterations();
+                opspsec = 1000000000.0 / nanospop;
+                stats[i] = elapsedNanos;
+                total += elapsedNanos;
+                std::cout << " Elapsed " << elapsedNanos << " nanoseconds. " << nanospop << " nanos/op. " << opspsec/1000.0 << " Kops/sec." << std::endl;
             }
+            std::cout << " Avg elapsed " << (double)total / (double)benchmark->batches() << " nanoseconds" << std::endl;
+            benchmark->stats(stats);
             benchmark->tearDown();
+            total = 0;
+            if (!benchmark->retainStats())
+            {
+                delete[] stats;
+            }
         }
     };
 
@@ -78,11 +174,43 @@ public:
         static std::vector<Benchmark *> table;
         return table;
     };
+
+#if defined(Darwin)
+    static uint64_t currentTimestamp(void)
+    {
+        return mach_absolute_time();
+    };
+
+    // inspired from https://developer.apple.com/library/mac/qa/qa1398/_index.html
+    static uint64_t elapsedNanoseconds(uint64_t start_timestamp, uint64_t end_timestamp)
+    {
+        static mach_timebase_info_data_t timebaseInfo;
+
+        if (0 == timebaseInfo.denom)
+        {
+            (void)mach_timebase_info(&timebaseInfo);
+        }
+        return (end_timestamp - start_timestamp) * timebaseInfo.numer / timebaseInfo.denom;
+    };
+#elif defined(__linux__)
+    static uint64_t currentTimestamp(void)
+    {
+        struct timespec ts;
+
+        clock_gettime(CLOCK_REALTIME, &ts);
+        return ts.tv_sec * 1000000000 + ts.tv_nsec;
+    };
+
+    static uint64_t elapsedNanoseconds(uint64_t start_timestamp, uint64_t end_timestamp)
+    {
+        return end_timestamp - start_timestamp;
+    };
+#endif /* platform high resolution time */
 };
 
 #define BENCHMARK_CLASS_NAME(x,y) x##y
 
-#define BENCHMARK(c,r,i) \
+#define BENCHMARK_CONFIG(c,r,i) \
     class BENCHMARK_CLASS_NAME(c,r) : public c { \
     public: \
       BENCHMARK_CLASS_NAME(c,r)() {}; \
@@ -90,7 +218,15 @@ public:
     private: \
       static Benchmark *instance_; \
     };                            \
-    Benchmark *BENCHMARK_CLASS_NAME(c,r)::instance_ = BenchmarkRunner::registerBenchmark(#c, #r, new BENCHMARK_CLASS_NAME(c,r)(), i); \
+    Benchmark *BENCHMARK_CLASS_NAME(c,r)::instance_ = BenchmarkRunner::registerBenchmark(#c, #r, new BENCHMARK_CLASS_NAME(c,r)(), i, sizeof(i)/sizeof(Benchmark::Config)); \
     void BENCHMARK_CLASS_NAME(c,r)::benchmarkBody(void)
+
+#define BENCHMARK_ITERATIONS(c,r,i) \
+    struct Benchmark::Config c ## r ## _cfg[] = {{Benchmark::ITERATIONS, #i},{Benchmark::BATCHES, DEFAULT_BATCHES_STRING}}; \
+    BENCHMARK_CONFIG(c,r, c ## r ## _cfg)
+
+#define BENCHMARK(c,r) \
+    struct Benchmark::Config c ## r ## _cfg[] = {{Benchmark::ITERATIONS, DEFAULT_ITERATIONS_STRING},{Benchmark::BATCHES, DEFAULT_BATCHES_STRING}}; \
+    BENCHMARK_CONFIG(c,r, c ## r ## _cfg)
 
 #endif /* _BENCHLET_HPP */
