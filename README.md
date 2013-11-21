@@ -7,9 +7,9 @@ Usage inspired by Google Test. See `bench1.cpp` and `bench2.cpp` files for examp
 
 To make:
 
-   $ make
+    $ make
 
 To run example benchmarks
 
-   $ ./benchlet-runner
+    $ ./benchlet-runner
 
