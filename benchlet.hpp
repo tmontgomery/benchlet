@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 #if defined(Darwin)
 #   include <mach/mach.h>
@@ -129,7 +130,7 @@ public:
         table().push_back(impl);
         std::cout << "Registering " << name << " run \"" << runName << "\" total iterations " << impl->iterations() * impl->batches() << std::endl;
         return impl;
-    };        
+    };
 
     static void run(void)
     {
@@ -146,8 +147,10 @@ public:
             benchmark->setUp();
             for (int i = 0, max_i = benchmark->batches(); i < max_i; i++)
             {
+                int j = 0, max_j = benchmark->iterations();
+
                 startTimestamp = currentTimestamp();
-                for (int j = 0, max_j = benchmark->iterations(); j < max_j; j++)
+                for (; j < max_j; j++)
                 {
                     benchmark->benchmarkBody();
                 }
@@ -158,7 +161,12 @@ public:
                 total += elapsedNanos;
                 std::cout << " Elapsed " << elapsedNanos << " nanoseconds. " << nanospop << " nanos/op. " << opspsec/1000.0 << " Kops/sec." << std::endl;
             }
-            std::cout << " Avg elapsed " << (double)total / (double)benchmark->batches() << " nanoseconds" << std::endl;
+            double elapsedPerBatch = (double)total / (double)benchmark->batches();
+            double elapsedPerIteration = elapsedPerBatch / (double)benchmark->iterations();
+            double throughputKopsps = 1000000.0 / elapsedPerIteration;
+            std::cout << " Avg elapsed/batch " << elapsedPerBatch << " nanoseconds" << std::endl;
+            std::cout << " Avg nanos/op " << elapsedPerIteration << " nanos/op" << std::endl;
+            std::cout << " Throughput " << throughputKopsps << " Kops/sec." << std::endl;
             benchmark->stats(stats);
             benchmark->tearDown();
             total = 0;
