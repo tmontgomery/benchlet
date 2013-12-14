@@ -53,7 +53,7 @@ static struct Benchmark::Config cfg1[] = {
 /*
  * Benchmarking of sqrt(). Will use config above, which is 5 batches of 10 iterations.
  */
-BENCHMARK_CONFIG(MyBench, Run10x5, cfg1)
+BENCHMARK_CONFIG(MyBench, RunSqrt, cfg1)
 {
     val = sqrt(20.0);
 }

@@ -59,7 +59,7 @@ public:
 
     virtual void setUp(void) {};
     virtual void tearDown(void) {};
-    virtual void benchmarkBody(void) {};
+    virtual uint64_t run(int iterations) = 0;
 
     void name(const char *name) { name_ = name; };
     const char *name(void ) const { return name_; };
@@ -137,7 +137,7 @@ public:
         for (std::vector<Benchmark *>::iterator it = table().begin(); it != table().end(); ++it)
         {
             Benchmark *benchmark = *it;
-            uint64_t startTimestamp, elapsedNanos;
+            uint64_t elapsedNanos;
             double nanospop, opspsec;
             uint64_t *stats = new uint64_t[benchmark->batches()];
             uint64_t total = 0;
@@ -147,26 +147,22 @@ public:
             benchmark->setUp();
             for (int i = 0, max_i = benchmark->batches(); i < max_i; i++)
             {
-                int j = 0, max_j = benchmark->iterations();
-
-                startTimestamp = currentTimestamp();
-                for (; j < max_j; j++)
-                {
-                    benchmark->benchmarkBody();
-                }
-                elapsedNanos = elapsedNanoseconds(startTimestamp, currentTimestamp());
+                elapsedNanos = benchmark->run(benchmark->iterations());
                 nanospop = (double)elapsedNanos / (double)benchmark->iterations();
                 opspsec = 1000000000.0 / nanospop;
                 stats[i] = elapsedNanos;
                 total += elapsedNanos;
-                std::cout << " Elapsed " << elapsedNanos << " nanoseconds. " << nanospop << " nanos/op. " << opspsec/1000.0 << " Kops/sec." << std::endl;
+                std::cout << " Elapsed " << elapsedNanos << " nanoseconds. ";
+                std::cout << opspsec/1000.0 << " Kops/sec. ";
+                std::cout << nanospop << " nanos/op. ";
+                std::cout << std::endl;
             }
             double elapsedPerBatch = (double)total / (double)benchmark->batches();
             double elapsedPerIteration = elapsedPerBatch / (double)benchmark->iterations();
             double throughputKopsps = 1000000.0 / elapsedPerIteration;
             std::cout << " Avg elapsed/batch " << elapsedPerBatch << " nanoseconds" << std::endl;
-            std::cout << " Avg nanos/op " << elapsedPerIteration << " nanos/op" << std::endl;
             std::cout << " Throughput " << throughputKopsps << " Kops/sec." << std::endl;
+            std::cout << " Avg nanos/op " << elapsedPerIteration << " nanos/op" << std::endl;
             benchmark->stats(stats);
             benchmark->tearDown();
             total = 0;
@@ -216,13 +212,29 @@ public:
 #endif /* platform high resolution time */
 };
 
+template <typename C>
+uint64_t runBenchmark(C *obj, int iterations)
+{
+    uint64_t start, end;
+    int i = 0;
+
+    start = BenchmarkRunner::currentTimestamp();
+    for (; i < iterations; i++)
+    {
+        obj->benchmarkBody();
+    }
+    end = BenchmarkRunner::currentTimestamp();
+    return BenchmarkRunner::elapsedNanoseconds(start, end);
+}
+
 #define BENCHMARK_CLASS_NAME(x,y) x##y
 
 #define BENCHMARK_CONFIG(c,r,i) \
     class BENCHMARK_CLASS_NAME(c,r) : public c { \
     public: \
       BENCHMARK_CLASS_NAME(c,r)() {}; \
-      virtual void benchmarkBody(void); \
+      virtual uint64_t run(int iterations) { return runBenchmark<BENCHMARK_CLASS_NAME(c,r)>(this, iterations); }; \
+      void benchmarkBody(void); \
     private: \
       static Benchmark *instance_; \
     };                            \
