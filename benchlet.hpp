@@ -26,8 +26,10 @@
 #   include <mach/mach_time.h>
 #elif defined(__linux__)
 #   include <time.h>
+#elif defined(WIN32)
+#   include <windows.h>
 #else
-#   error "Must define Darwin or __linux__"
+#   error "Must define Darwin or __linux__ or WIN32"
 #endif /* platform includes */
 
 #include <iostream>
@@ -209,6 +211,26 @@ public:
     {
         return end_timestamp - start_timestamp;
     };
+#elif defined(WIN32)
+    static uint64_t currentTimestamp(void)
+    {
+        static LARGE_INTEGER freq;
+        static int first = 1;
+        LARGE_INTEGER counter;
+
+        ::QueryPerformanceCounter(&counter);
+        if (1 == first)
+        {
+            ::QueryPerformanceFrequency(&freq);
+            first = 0;
+        }
+        return (1000000000 * counter.QuadPart)/freq.QuadPart;
+    }
+
+    static uint64_t elapsedNanoseconds(uint64_t start_timestamp, uint64_t end_timestamp)
+    {
+        return end_timestamp - start_timestamp;
+    }
 #endif /* platform high resolution time */
 };
 
